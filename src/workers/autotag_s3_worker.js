@@ -1,12 +1,10 @@
-import AutotagDefaultWorker from './autotag_default_worker';
-import AWS from 'aws-sdk';
-import co from 'co';
+import AutotagDefaultWorker from "./autotag_default_worker";
+import AWS from "aws-sdk";
+import co from "co";
 
-const TAG_NAME_PREFIXES_TO_FILTER = [
-  'aws:'
-];
+const TAG_NAME_PREFIXES_TO_FILTER = ["aws:"];
 
-const AUTOTAG_TAG_PREFIX = 'at_';
+const AUTOTAG_TAG_PREFIX = "at_";
 
 class AutotagS3Worker extends AutotagDefaultWorker {
   /* tagResource
@@ -17,17 +15,14 @@ class AutotagS3Worker extends AutotagDefaultWorker {
 
   tagResource() {
     let _this = this;
-    return co(function* () {
+    return co(function*() {
       let roleName = yield _this.getRoleName();
       let credentials = yield _this.assumeRole(roleName);
       _this.s3 = new AWS.S3({
         region: _this.event.awsRegion,
         credentials: credentials
       });
-      let tags = yield _this.getExistingTags();
-      tags.push(_this.getAutotagPair());
-      tags = _this.touchReservedTagKeys(tags);
-      yield _this.setTags(tags);
+      yield _this.getExistingTags();
     });
   }
 
@@ -35,19 +30,24 @@ class AutotagS3Worker extends AutotagDefaultWorker {
     let _this = this;
     return new Promise((resolve, reject) => {
       try {
-        _this.s3.getBucketTagging({
-          Bucket: _this.getBucketName(),
-        }, (err, res) => {
-          if (err) {
-            if (err.code === 'NoSuchTagSet' && err.statusCode === 404) {
-              resolve([]);
+        _this.s3.getBucketTagging(
+          {
+            Bucket: _this.getBucketName()
+          },
+          (err, res) => {
+            if (err) {
+              if (err.code === "NoSuchTagSet" && err.statusCode === 404) {
+                _this.setTags([]);
+                resolve(err);
+              } else {
+                reject(err);
+              }
             } else {
-              reject(err);
+              _this.setTags(res.TagSet);
+              resolve(res);
             }
-          } else {
-            resolve(res.TagSet);
           }
-        });
+        );
       } catch (e) {
         reject(e);
       }
@@ -63,7 +63,7 @@ class AutotagS3Worker extends AutotagDefaultWorker {
   * cases where the S3 bucket was created by CloudFormation.
   */
   touchReservedTagKeys(tags) {
-    return tags.map((tag) => {
+    return tags.map(tag => {
       if (this.tagKeyIsReserved(tag)) {
         tag.Key = AUTOTAG_TAG_PREFIX + tag.Key;
       }
@@ -78,31 +78,40 @@ class AutotagS3Worker extends AutotagDefaultWorker {
   * check if tag key is reserved
   */
   tagKeyIsReserved(tag) {
-    return TAG_NAME_PREFIXES_TO_FILTER.some((prefix) => {
+    return TAG_NAME_PREFIXES_TO_FILTER.some(prefix => {
       return tag.Key.startsWith(prefix);
     });
   }
 
   setTags(tags) {
     let _this = this;
-    return new Promise((resolve, reject) => {
-      try {
-        _this.s3.putBucketTagging({
+    let assetTag = _this.checkTagExists(tags);
+
+    if (!assetTag) {
+      tags.push(_this.getAutotagPair());
+    }
+
+    tags = _this.touchReservedTagKeys(tags);
+
+    try {
+      _this.s3.putBucketTagging(
+        {
           Bucket: _this.getBucketName(),
           Tagging: {
             TagSet: tags
           }
-        }, (err, res) => {
+        },
+        (err, res) => {
           if (err) {
-            reject(err);
+            console.log(err);
           } else {
-            resolve(res);
+            console.log(res);
           }
-        });
-      } catch (e) {
-        reject(e);
-      }
-    });
+        }
+      );
+    } catch (e) {
+      console.log(e);
+    }
   }
 
   getBucketName() {
